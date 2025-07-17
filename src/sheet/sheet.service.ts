@@ -1,56 +1,49 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { google, sheets_v4 } from 'googleapis';
 import { join } from 'path';
+import { Balance } from 'src/transaction/entities/balance.entity';
 
 @Injectable()
 export class SheetService implements OnModuleInit {
   private sheets: sheets_v4.Sheets;
+  private readonly MAIN_SHEET_NAME = 'main';
+  private readonly META_SHEET_NAME = 'meta';
+  private readonly DATA_RANGE = `${this.MAIN_SHEET_NAME}!A2:F`;
+  private readonly TOTAL_BALANCE_RANGE = `${this.META_SHEET_NAME}!A2:B2`;
+  private SPREADSHEET_ID =
+    process.env.GOOGLE_SPREADSHEET_ID || 'YOUR_SPREADSHEET_ID_HERE';
 
   async onModuleInit() {
     const keyFile =
       process.env.GOOGLE_KEY_FILE ||
       join(process.cwd(), 'YOUR_GOOGLE_SERVICE_ACCOUNT_KEY.json');
-    const spreadsheetId =
-      process.env.GOOGLE_SPREADSHEET_ID || 'YOUR_SPREADSHEET_ID_HERE';
 
     const auth = new google.auth.GoogleAuth({
       scopes: ['https://www.googleapis.com/auth/spreadsheets'],
       keyFile,
     });
+
     const authClient = await auth.getClient();
+
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
     this.sheets = google.sheets({ version: 'v4', auth: authClient as any });
 
-    // Example usage: Fetch data from a specific range in the spreadsheet
-    const range = 'sheet1!A2:C';
-
-    try {
-      await this.writeSheetData(spreadsheetId, range, [
-        ['New Data 1', 'New Data 2', 'New Data 3'],
-        ['More Data 1', 'More Data 2', 'More Data 3'],
-      ]);
-    } catch (e) {
-      console.error('Error writing data to the sheet:', e);
-      return;
-    }
-
-    const raws = await this.getSheetData(spreadsheetId, range);
-    console.log(raws);
+    this.SPREADSHEET_ID =
+      process.env.GOOGLE_SPREADSHEET_ID || 'YOUR_SPREADSHEET_ID_HERE';
   }
 
-  async getSheetData(spreadsheetId: string, range: string) {
+  async getRawSheetData(): Promise<string[][]> {
     const res = await this.sheets.spreadsheets.values.get({
-      spreadsheetId,
-      range,
+      spreadsheetId: this.SPREADSHEET_ID,
+      range: this.DATA_RANGE,
     });
-
-    return res.data.values;
+    return (res.data.values || []) as string[][];
   }
 
-  async writeSheetData(spreadsheetId: string, range: string, values: any[][]) {
+  async writeRawSheetData(values: string[][]) {
     const res = await this.sheets.spreadsheets.values.append({
-      spreadsheetId,
-      range,
+      spreadsheetId: this.SPREADSHEET_ID,
+      range: this.DATA_RANGE,
       valueInputOption: 'USER_ENTERED',
       requestBody: {
         values,
@@ -60,6 +53,22 @@ export class SheetService implements OnModuleInit {
     if (res.ok) {
       return res.data;
     }
+
     throw new Error('Failed to write data to the sheet');
+  }
+
+  async getTotalBalance(): Promise<Balance> {
+    const res = await this.sheets.spreadsheets.values.get({
+      spreadsheetId: this.SPREADSHEET_ID,
+      range: this.TOTAL_BALANCE_RANGE,
+    });
+
+    const amount = res.data.values![0][0] as string;
+    const lastUpdated = res.data.values![0][1] as string | undefined;
+
+    return {
+      amount: amount ? parseFloat(amount) : 0,
+      lastUpdated: lastUpdated ? new Date(lastUpdated) : undefined,
+    };
   }
 }
